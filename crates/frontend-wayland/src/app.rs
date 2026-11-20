@@ -21,7 +21,9 @@ use crate::protocol::client::zwp_input_panel_surface_v1::ZwpInputPanelSurfaceV1;
 use crate::protocol::client::zwp_input_panel_v1::ZwpInputPanelV1;
 use crate::repeat::RepeatInfo;
 use crate::timer::Timer;
-use crate::translate::{case_from_shift, is_modifier_keysym, toggle_role, translate};
+use crate::translate::{
+    KEY_CONTROL_R, case_from_shift, is_modifier_keysym, toggle_role, translate,
+};
 use crate::watch::ConfigWatcher;
 use easime_config::Config;
 use engine_japanese::Dictionary;
@@ -137,6 +139,9 @@ pub(crate) struct App {
     /// The switch key. The key is the evdev code; the token is what forwarding
     /// a held-back press to the application needs: its serial and time.
     toggle: ToggleTracker<u32, (u32, u32)>,
+    /// The right Ctrl key (evdev code) while it is down and nothing else has
+    /// been pressed since: released like that, it is a tap and means Hanja.
+    hanja_tap: Option<u32>,
     /// Fires when a consumed key should repeat.
     timer: Timer,
     /// Where settings are re-read from when the file changes, if watched.
@@ -185,6 +190,7 @@ impl App {
             repeat_info: RepeatInfo::default(),
             repeating: None,
             toggle: ToggleTracker::with_setting(config.shortcuts.toggle_key),
+            hanja_tap: None,
             timer: Timer::new()?,
             settings: None,
             panel: None,
@@ -338,6 +344,7 @@ impl App {
         self.session.reset();
         self.swallowed.clear();
         self.toggle.clear();
+        self.hanja_tap = None;
         self.stop_repeat();
     }
 
@@ -455,6 +462,9 @@ impl App {
     fn on_key(&mut self, serial: u32, time: u32, key: u32, action: KeyAction) {
         match action {
             KeyAction::Released => {
+                if self.hanja_tap.take() == Some(key) {
+                    self.hanja_by_tap();
+                }
                 let released = self.toggle.on_release(key);
                 if released == Decision::Toggle {
                     self.toggle_language();
@@ -469,6 +479,10 @@ impl App {
                 return;
             }
             KeyAction::Repeated => {
+                // Held down, it is a modifier and not a tap.
+                if self.hanja_tap == Some(key) {
+                    self.hanja_tap = None;
+                }
                 // The compositor repeats for us only when our own timer is off.
                 if self.swallowed.contains_key(&key) {
                     if self.repeating != Some(key) {
@@ -482,6 +496,8 @@ impl App {
             KeyAction::Pressed => {
                 // The most recently pressed key is the one that repeats.
                 self.stop_repeat();
+                // Any other key pressed after right Ctrl: it was a modifier.
+                self.hanja_tap = None;
             }
         }
 
@@ -534,6 +550,11 @@ impl App {
             Decision::Pass => {}
         }
         if is_modifier_keysym(keysym) {
+            // Right Ctrl alone, with no modifier held: it may turn out to be a
+            // tap. It is forwarded as always, so Ctrl shortcuts keep working.
+            if keysym == KEY_CONTROL_R && !self.current_modifiers().any() && !self.shift_held() {
+                self.hanja_tap = Some(key);
+            }
             self.forward_key(serial, time, key, KeyAction::Pressed);
             return;
         }
@@ -576,6 +597,19 @@ impl App {
             self.start_repeat(key);
         } else {
             self.forward_key(serial, time, key, KeyAction::Pressed);
+        }
+    }
+
+    /// Right Ctrl was tapped: the same as the Hanja key.
+    fn hanja_by_tap(&mut self) {
+        if !self.panel.as_ref().is_some_and(Panel::can_show_candidates) {
+            return;
+        }
+        // English, or nothing to convert: nothing happens (there is no key to forward).
+        if let Some(output) = self.session.process_key(KeyEvent::new(Key::Hanja))
+            && output.handled
+        {
+            self.apply(output);
         }
     }
 

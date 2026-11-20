@@ -6,6 +6,7 @@ use common::{Fake, Globals, Req, korean_only};
 use std::time::Duration;
 
 const HANJA: u32 = 0xff34;
+const CONTROL_R: u32 = 0xffe4;
 const ENTER: u32 = 28;
 const ESCAPE: u32 = 1;
 const BACKSPACE: u32 = 14;
@@ -130,4 +131,61 @@ fn candidates_work_with_the_indicator_disabled() {
     let hanja = fake.evdev_for_keysym(HANJA);
     fake.tap_all(&[hanja]);
     assert!(fake.wait_for_indicator_shown().width > 48);
+}
+
+#[test]
+fn tapping_right_ctrl_opens_the_hanja_candidates() {
+    let mut fake = Fake::start();
+    fake.activate();
+    type_han(&mut fake);
+    let ctrl = fake.evdev_for_keysym(CONTROL_R);
+    fake.tap_all(&[ctrl]);
+    let shot = fake.wait_for_indicator_shown();
+    assert!(shot.width > 48 && shot.height > 48, "the candidate window");
+    fake.take_requests();
+    fake.tap_all(&[DOWN, ENTER]);
+    let requests = fake.settle();
+    let commits: Vec<_> = requests
+        .iter()
+        .filter_map(|r| match r {
+            Req::CommitString { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(commits, ["漢"], "{requests:#?}");
+}
+
+#[test]
+fn right_ctrl_used_as_a_modifier_does_not_open_candidates() {
+    let mut fake = Fake::start();
+    fake.activate();
+    type_han(&mut fake);
+    let ctrl = fake.evdev_for_keysym(CONTROL_R);
+    // Ctrl+C style: another key is pressed while Ctrl is down.
+    fake.press(ctrl);
+    fake.tap_all(&[46]);
+    fake.release(ctrl);
+    let requests = fake.settle();
+    assert!(
+        !requests
+            .iter()
+            .any(|r| matches!(r, Req::CommitString { text, .. } if text == "漢")),
+        "{requests:#?}"
+    );
+}
+
+#[test]
+fn right_ctrl_tapped_without_a_syllable_does_nothing() {
+    let mut fake = Fake::start();
+    fake.activate();
+    let _ = fake.take_requests();
+    let ctrl = fake.evdev_for_keysym(CONTROL_R);
+    fake.tap_all(&[ctrl]);
+    let requests = fake.settle();
+    assert!(
+        !requests
+            .iter()
+            .any(|r| matches!(r, Req::CommitString { .. } | Req::PreeditString { .. })),
+        "{requests:#?}"
+    );
 }

@@ -30,6 +30,8 @@ const KEY_KP_ENTER: u32 = 0xff8d;
 const KEY_SHIFT_L: u32 = 0xffe1;
 const KEY_HYPER_R: u32 = 0xffee;
 pub(crate) const KEY_ALT_R: u32 = 0xffea;
+/// The right Ctrl key: tapped alone it is the Hanja key (the user's decision of 2026-11-20).
+pub(crate) const KEY_CONTROL_R: u32 = 0xffe4;
 const KEY_SPACE: u32 = 0x20;
 
 /// True for keys that only change modifier state (Shift, Ctrl, Alt, Super,
