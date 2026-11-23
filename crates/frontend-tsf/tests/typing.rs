@@ -59,11 +59,31 @@ use windows::core::{
     implement, w,
 };
 
-/// `target/<profile>/frontend_tsf.dll`, next to the test's own folder.
+/// `frontend_tsf.dll` in the profile folder of this build
+/// (`target[/<triple>]/<profile>/frontend_tsf.dll`).
+///
+/// Where the test program itself sits inside that folder has moved: it used
+/// to run from `deps`, and a newer Cargo runs it from
+/// `build/frontend-tsf/<hash>/out` instead, so counting a fixed number of
+/// folders up from the program no longer lands in the profile folder
+/// (that is what broke this test in CI, with the code itself unchanged).
+/// Walking up from the program and looking in each folder finds the DLL in
+/// either layout. The walk stops at `target`: the first DLL found is this
+/// build's, because for a target-triple build the profile folder comes
+/// before the triple folder and `target` itself, and a DLL left somewhere
+/// above the target folder is never picked up by mistake.
 fn dll() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let dll = exe.parent()?.parent()?.join("frontend_tsf.dll");
-    dll.is_file().then_some(dll)
+    for folder in exe.ancestors().skip(1) {
+        let candidate = folder.join("frontend_tsf.dll");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if folder.file_name() == Some(std::ffi::OsStr::new("target")) {
+            break;
+        }
+    }
+    None
 }
 
 fn regsvr32(dll: &PathBuf, unregister: bool) -> bool {
